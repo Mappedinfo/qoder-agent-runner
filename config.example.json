@@ -1,0 +1,11 @@
+{
+  "active_profile": "default",
+  "profiles": {
+    "default": {
+      "agent_id": "replace-with-qoder-agent-id",
+      "environment_id": "replace-with-qoder-environment-id",
+      "output_root": "~/QoderRuns",
+      "token_env": "QODER_PAT"
+    }
+  }
+}

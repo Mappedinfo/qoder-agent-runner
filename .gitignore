@@ -1,0 +1,12 @@
+.DS_Store
+.build/
+.swiftpm/
+DerivedData/
+dist/
+config.local.json
+.env
+QoderRuns/
+qoder_runs/
+runs/
+*.xcuserdata/
+*.xcodeproj/project.xcworkspace/xcuserdata/

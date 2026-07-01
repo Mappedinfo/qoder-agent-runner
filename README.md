@@ -1,0 +1,62 @@
+# Qoder Agent Runner
+
+Small native macOS runner for one-shot Qoder agent reports.
+
+## Configure
+
+Copy the example config and fill in your local values:
+
+```bash
+cp config.example.json config.local.json
+```
+
+`config.local.json` is ignored by git. Keep real agent IDs, environment IDs, output folders, and secrets there or in your shell environment.
+
+Example local config shape:
+
+```json
+{
+  "active_profile": "default",
+  "profiles": {
+    "default": {
+      "agent_id": "your-agent-id",
+      "environment_id": "your-environment-id",
+      "output_root": "~/QoderRuns",
+      "token_env": "QODER_PAT"
+    }
+  }
+}
+```
+
+The token itself is read from the environment variable named by `token_env`. The UI also provides a temporary token field for one run; it is not written to config.
+
+## Build
+
+```bash
+swift build
+```
+
+## CLI
+
+```bash
+swift run qoder-run --prompt "调研推理时扩展与更大预训练模型在推理任务上的现状对比。"
+swift run qoder-run --prompt-file /path/to/prompt.md
+swift run qoder-run --config config.local.json --profile default --prompt-file /path/to/prompt.md
+```
+
+Each run writes a timestamped folder under the configured `output_root`.
+
+## macOS App
+
+```bash
+swift run QoderRunnerApp
+```
+
+For a double-clickable app bundle:
+
+```bash
+./scripts/build-app.sh
+open dist/QoderRunner.app
+```
+
+The app clears common proxy environment variables and uses a `URLSession` configuration with no proxy dictionary. This disables app-level proxy use, but it cannot bypass OS-level TUN/VPN routing.
