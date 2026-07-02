@@ -7,7 +7,8 @@
       "agent_version": 1,
       "environment_id": "replace-with-qoder-environment-id",
       "output_root": "~/QoderRuns",
-      "token_env": "QODER_PAT"
+      "token_env": "QODER_PAT",
+      "env_file": ".env"
     }
   }
 }

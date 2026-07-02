@@ -203,7 +203,14 @@ final class RunnerViewModel: ObservableObject {
         let override = tokenOverride.trimmingCharacters(in: .whitespacesAndNewlines)
         if !override.isEmpty { return true }
         let envName = tokenEnv.trimmingCharacters(in: .whitespacesAndNewlines)
-        return !envName.isEmpty && ProcessInfo.processInfo.environment[envName] != nil
+        if !envName.isEmpty && ProcessInfo.processInfo.environment[envName] != nil {
+            return true
+        }
+        return (try? QoderConfigResolver.resolve(
+            configPath: URL(fileURLWithPath: configPath),
+            profileName: profileName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : profileName,
+            overrides: QoderConfigOverrides(tokenOverride: tokenOverride)
+        )) != nil
     }
 
     func loadConfig() {

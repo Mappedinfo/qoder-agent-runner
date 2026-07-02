@@ -11,6 +11,18 @@ struct QoderRunCLI {
                 return
             }
 
+            if options.checkConfig {
+                let resolvedConfig = try resolveConfig(options)
+                print("ok=true")
+                print("profile=\(resolvedConfig.profileName)")
+                print("base_url=\(resolvedConfig.baseURL.absoluteString)")
+                print("agent_id=set")
+                print("environment_id=set")
+                print("token_env=\(resolvedConfig.tokenEnv)")
+                print("env_file=\(resolvedConfig.envFile?.path ?? "")")
+                return
+            }
+
             let prompt: String
             if let promptValue = options.prompt {
                 prompt = promptValue
@@ -20,18 +32,7 @@ struct QoderRunCLI {
                 throw CLIError.missingPrompt
             }
 
-            let resolvedConfig = try QoderConfigResolver.resolve(
-                configPath: options.configPath,
-                profileName: options.profileName,
-                overrides: QoderConfigOverrides(
-                    baseURL: options.baseURL,
-                    agentID: options.agentID,
-                    agentVersion: options.agentVersion,
-                    environmentID: options.environmentID,
-                    outputRoot: options.outputRoot,
-                    tokenEnv: options.tokenEnv
-                )
-            )
+            let resolvedConfig = try resolveConfig(options)
             var configuration = RunConfiguration(resolvedConfig: resolvedConfig)
             configuration.runID = options.runID
             configuration.runDirectory = options.runDirectory
@@ -70,8 +71,26 @@ struct QoderRunCLI {
           --run-dir PATH         exact output folder for this run
           --metadata K=V         session metadata; can be repeated
           --token-env NAME       token environment variable; defaults to QODER_PAT
+          --env-file PATH        optional .env file containing the token variable
+          --check-config         validate config and token resolution without a network call
           --help                 show this help
         """)
+    }
+
+    private static func resolveConfig(_ options: CLIOptions) throws -> ResolvedQoderConfig {
+        try QoderConfigResolver.resolve(
+            configPath: options.configPath,
+            profileName: options.profileName,
+            overrides: QoderConfigOverrides(
+                baseURL: options.baseURL,
+                agentID: options.agentID,
+                agentVersion: options.agentVersion,
+                environmentID: options.environmentID,
+                outputRoot: options.outputRoot,
+                tokenEnv: options.tokenEnv,
+                envFile: options.envFile
+            )
+        )
     }
 }
 
@@ -89,7 +108,9 @@ private struct CLIOptions {
     var runDirectory: URL?
     var metadata: [String: String] = [:]
     var tokenEnv: String?
+    var envFile: URL?
     var showHelp = false
+    var checkConfig = false
 
     static func parse(_ arguments: [String]) throws -> CLIOptions {
         var options = CLIOptions()
@@ -100,6 +121,8 @@ private struct CLIOptions {
             switch argument {
             case "--help", "-h":
                 options.showHelp = true
+            case "--check-config":
+                options.checkConfig = true
             case "--prompt":
                 options.prompt = try value(after: argument, in: arguments, index: &index)
             case "--prompt-file":
@@ -139,6 +162,8 @@ private struct CLIOptions {
                 options.metadata[parts[0]] = parts[1]
             case "--token-env":
                 options.tokenEnv = try value(after: argument, in: arguments, index: &index)
+            case "--env-file":
+                options.envFile = URL(fileURLWithPath: try value(after: argument, in: arguments, index: &index))
             default:
                 throw CLIError.unknownArgument(argument)
             }
