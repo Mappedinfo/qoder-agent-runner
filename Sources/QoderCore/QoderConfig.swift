@@ -11,25 +11,33 @@ public struct QoderConfigFile: Codable {
 }
 
 public struct QoderProfileConfig: Codable {
+    public var baseURL: String?
     public var agentID: String?
+    public var agentVersion: Int?
     public var environmentID: String?
     public var outputRoot: String?
     public var tokenEnv: String?
 
     public init(
+        baseURL: String? = nil,
         agentID: String? = nil,
+        agentVersion: Int? = nil,
         environmentID: String? = nil,
         outputRoot: String? = nil,
         tokenEnv: String? = nil
     ) {
+        self.baseURL = baseURL
         self.agentID = agentID
+        self.agentVersion = agentVersion
         self.environmentID = environmentID
         self.outputRoot = outputRoot
         self.tokenEnv = tokenEnv
     }
 
     enum CodingKeys: String, CodingKey {
+        case baseURL = "base_url"
         case agentID = "agent_id"
+        case agentVersion = "agent_version"
         case environmentID = "environment_id"
         case outputRoot = "output_root"
         case tokenEnv = "token_env"
@@ -37,20 +45,26 @@ public struct QoderProfileConfig: Codable {
 }
 
 public struct QoderConfigOverrides {
+    public var baseURL: URL?
     public var agentID: String?
+    public var agentVersion: Int?
     public var environmentID: String?
     public var outputRoot: URL?
     public var tokenEnv: String?
     public var tokenOverride: String?
 
     public init(
+        baseURL: URL? = nil,
         agentID: String? = nil,
+        agentVersion: Int? = nil,
         environmentID: String? = nil,
         outputRoot: URL? = nil,
         tokenEnv: String? = nil,
         tokenOverride: String? = nil
     ) {
+        self.baseURL = baseURL
         self.agentID = agentID
+        self.agentVersion = agentVersion
         self.environmentID = environmentID
         self.outputRoot = outputRoot
         self.tokenEnv = tokenEnv
@@ -61,7 +75,9 @@ public struct QoderConfigOverrides {
 public struct ResolvedQoderConfig {
     public let profileName: String
     public let configPath: URL?
+    public let baseURL: URL
     public let agentID: String
+    public let agentVersion: Int?
     public let environmentID: String
     public let outputRoot: URL
     public let tokenEnv: String
@@ -71,6 +87,7 @@ public struct ResolvedQoderConfig {
 public enum QoderConfigError: LocalizedError {
     case configFileMissing(String)
     case invalidConfig(String)
+    case invalidBaseURL(String)
     case profileMissing(String)
     case missingAgentID
     case missingEnvironmentID
@@ -82,6 +99,8 @@ public enum QoderConfigError: LocalizedError {
             return "Missing config file: \(path)"
         case .invalidConfig(let message):
             return "Invalid config: \(message)"
+        case .invalidBaseURL(let value):
+            return "Invalid base_url: \(value)"
         case .profileMissing(let profile):
             return "Missing profile in config: \(profile)"
         case .missingAgentID:
@@ -162,11 +181,15 @@ public enum QoderConfigResolver {
         }
 
         let agentID = clean(overrides.agentID) ?? clean(profile.agentID)
+        let agentVersion = overrides.agentVersion ?? profile.agentVersion
         let environmentID = clean(overrides.environmentID) ?? clean(profile.environmentID)
         let tokenEnv = clean(overrides.tokenEnv) ?? clean(profile.tokenEnv) ?? QoderDefaults.defaultTokenEnvironmentVariable
         let outputRoot = overrides.outputRoot
             ?? profile.outputRoot.flatMap { clean($0) }.map(expandPath(_:))
             ?? QoderDefaults.defaultOutputRoot
+        let baseURL = try overrides.baseURL
+            ?? profile.baseURL.flatMap { clean($0) }.map(resolveBaseURL(_:))
+            ?? QoderDefaults.apiBaseURL
 
         guard let agentID else {
             throw QoderConfigError.missingAgentID
@@ -183,7 +206,9 @@ public enum QoderConfigResolver {
         return ResolvedQoderConfig(
             profileName: profileName,
             configPath: fileExists ? path : nil,
+            baseURL: baseURL,
             agentID: agentID,
+            agentVersion: agentVersion,
             environmentID: environmentID,
             outputRoot: outputRoot,
             tokenEnv: tokenEnv,
@@ -200,6 +225,18 @@ public enum QoderConfigResolver {
                 .appendingPathComponent(String(path.dropFirst(2)), isDirectory: true)
         }
         return URL(fileURLWithPath: path, isDirectory: true)
+    }
+
+    private static func resolveBaseURL(_ value: String) throws -> URL {
+        guard
+            let url = URL(string: value),
+            let scheme = url.scheme,
+            ["http", "https"].contains(scheme),
+            url.host != nil
+        else {
+            throw QoderConfigError.invalidBaseURL(value)
+        }
+        return url
     }
 
     private static func clean(_ value: String?) -> String? {

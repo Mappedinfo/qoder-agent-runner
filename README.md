@@ -19,7 +19,9 @@ Example local config shape:
   "active_profile": "default",
   "profiles": {
     "default": {
+      "base_url": "https://api.qoder.com.cn/api/v1/cloud",
       "agent_id": "your-agent-id",
+      "agent_version": 1,
       "environment_id": "your-environment-id",
       "output_root": "~/QoderRuns",
       "token_env": "QODER_PAT"
@@ -28,7 +30,7 @@ Example local config shape:
 }
 ```
 
-The token itself is read from the environment variable named by `token_env`. The UI also provides a temporary token field for one run; it is not written to config.
+The token itself is read from the environment variable named by `token_env`. The UI also provides a temporary token field for one run; it is not written to config. The default API base URL remains `https://api.qoder.com.cn/api/v1/cloud`; override `base_url` per profile when needed.
 
 ## Build
 
@@ -42,9 +44,10 @@ swift build
 swift run qoder-run --prompt "调研推理时扩展与更大预训练模型在推理任务上的现状对比。"
 swift run qoder-run --prompt-file /path/to/prompt.md
 swift run qoder-run --config config.local.json --profile default --prompt-file /path/to/prompt.md
+swift run qoder-run --prompt-file /path/to/prompt.md --run-id run_001 --metadata project_id=demo --metadata task_id=task_001
 ```
 
-Each run writes a timestamped folder under the configured `output_root`.
+Each run writes a timestamped folder under the configured `output_root`, unless `--run-id` or `--run-dir` is supplied.
 
 Run outputs include:
 

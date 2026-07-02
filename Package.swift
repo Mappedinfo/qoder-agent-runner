@@ -19,6 +19,10 @@ let package = Package(
         .executableTarget(
             name: "QoderRunnerApp",
             dependencies: ["QoderCore"]
+        ),
+        .testTarget(
+            name: "QoderCoreTests",
+            dependencies: ["QoderCore"]
         )
     ]
 )

@@ -20,18 +20,23 @@ struct QoderRunCLI {
                 throw CLIError.missingPrompt
             }
 
-            let runner = QoderRunner(configuration: RunConfiguration(
-                resolvedConfig: try QoderConfigResolver.resolve(
-                    configPath: options.configPath,
-                    profileName: options.profileName,
-                    overrides: QoderConfigOverrides(
-                        agentID: options.agentID,
-                        environmentID: options.environmentID,
-                        outputRoot: options.outputRoot,
-                        tokenEnv: options.tokenEnv
-                    )
+            let resolvedConfig = try QoderConfigResolver.resolve(
+                configPath: options.configPath,
+                profileName: options.profileName,
+                overrides: QoderConfigOverrides(
+                    baseURL: options.baseURL,
+                    agentID: options.agentID,
+                    agentVersion: options.agentVersion,
+                    environmentID: options.environmentID,
+                    outputRoot: options.outputRoot,
+                    tokenEnv: options.tokenEnv
                 )
-            ))
+            )
+            var configuration = RunConfiguration(resolvedConfig: resolvedConfig)
+            configuration.runID = options.runID
+            configuration.runDirectory = options.runDirectory
+            configuration.metadata = options.metadata
+            let runner = QoderRunner(configuration: configuration)
 
             let result = try await runner.run(prompt: prompt)
             print("run_dir=\(result.runDirectory.path)")
@@ -55,10 +60,15 @@ struct QoderRunCLI {
 
         Options:
           --agent ID             Qoder agent id
+          --agent-version N      Qoder agent version to pin
           --environment-id ID    Qoder environment id
+          --base-url URL         Qoder API base URL; defaults to qoder.com.cn
           --config PATH          config JSON path; defaults to config.local.json
           --profile NAME         profile name in config JSON
           --output-root PATH     output root for timestamped run folders
+          --run-id ID            deterministic folder name under output root
+          --run-dir PATH         exact output folder for this run
+          --metadata K=V         session metadata; can be repeated
           --token-env NAME       token environment variable; defaults to QODER_PAT
           --help                 show this help
         """)
@@ -70,9 +80,14 @@ private struct CLIOptions {
     var promptFile: URL?
     var configPath: URL?
     var profileName: String?
+    var baseURL: URL?
     var agentID: String?
+    var agentVersion: Int?
     var environmentID: String?
     var outputRoot: URL?
+    var runID: String?
+    var runDirectory: URL?
+    var metadata: [String: String] = [:]
     var tokenEnv: String?
     var showHelp = false
 
@@ -91,14 +106,37 @@ private struct CLIOptions {
                 options.promptFile = URL(fileURLWithPath: try value(after: argument, in: arguments, index: &index))
             case "--agent":
                 options.agentID = try value(after: argument, in: arguments, index: &index)
+            case "--agent-version":
+                let rawValue = try value(after: argument, in: arguments, index: &index)
+                guard let version = Int(rawValue), version > 0 else {
+                    throw CLIError.invalidValue(argument, rawValue)
+                }
+                options.agentVersion = version
             case "--environment-id":
                 options.environmentID = try value(after: argument, in: arguments, index: &index)
+            case "--base-url":
+                let rawValue = try value(after: argument, in: arguments, index: &index)
+                guard let url = URL(string: rawValue), url.scheme != nil, url.host != nil else {
+                    throw CLIError.invalidValue(argument, rawValue)
+                }
+                options.baseURL = url
             case "--config":
                 options.configPath = URL(fileURLWithPath: try value(after: argument, in: arguments, index: &index))
             case "--profile":
                 options.profileName = try value(after: argument, in: arguments, index: &index)
             case "--output-root":
                 options.outputRoot = URL(fileURLWithPath: try value(after: argument, in: arguments, index: &index), isDirectory: true)
+            case "--run-id":
+                options.runID = try value(after: argument, in: arguments, index: &index)
+            case "--run-dir":
+                options.runDirectory = URL(fileURLWithPath: try value(after: argument, in: arguments, index: &index), isDirectory: true)
+            case "--metadata":
+                let rawValue = try value(after: argument, in: arguments, index: &index)
+                let parts = rawValue.split(separator: "=", maxSplits: 1).map(String.init)
+                guard parts.count == 2, !parts[0].isEmpty else {
+                    throw CLIError.invalidValue(argument, rawValue)
+                }
+                options.metadata[parts[0]] = parts[1]
             case "--token-env":
                 options.tokenEnv = try value(after: argument, in: arguments, index: &index)
             default:
@@ -123,6 +161,7 @@ private struct CLIOptions {
 private enum CLIError: LocalizedError {
     case missingPrompt
     case missingValue(String)
+    case invalidValue(String, String)
     case unknownArgument(String)
 
     var errorDescription: String? {
@@ -131,6 +170,8 @@ private enum CLIError: LocalizedError {
             return "Missing --prompt or --prompt-file"
         case .missingValue(let option):
             return "Missing value for \(option)"
+        case .invalidValue(let option, let value):
+            return "Invalid value for \(option): \(value)"
         case .unknownArgument(let argument):
             return "Unknown argument: \(argument)"
         }

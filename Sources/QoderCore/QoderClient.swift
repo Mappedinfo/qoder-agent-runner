@@ -24,13 +24,20 @@ public final class QoderClient {
     private let baseURL: URL
     private let session: URLSession
 
-    public init(token: String, baseURL: URL = QoderDefaults.apiBaseURL) {
+    public init(
+        token: String,
+        baseURL: URL = QoderDefaults.apiBaseURL,
+        protocolClasses: [AnyClass]? = nil
+    ) {
         Self.clearProxyEnvironmentForCurrentProcess()
 
         self.token = token
         self.baseURL = baseURL
 
         let configuration = URLSessionConfiguration.ephemeral
+        if let protocolClasses {
+            configuration.protocolClasses = protocolClasses
+        }
         configuration.connectionProxyDictionary = [:]
         configuration.requestCachePolicy = .reloadIgnoringLocalAndRemoteCacheData
         configuration.urlCache = nil
@@ -56,14 +63,28 @@ public final class QoderClient {
         }
     }
 
-    public func createSession(agentID: String, environmentID: String) async throws -> (QoderSessionInfo, Data) {
+    public func createSession(
+        agentID: String,
+        agentVersion: Int? = nil,
+        environmentID: String,
+        metadata: [String: String]? = nil
+    ) async throws -> (QoderSessionInfo, Data) {
         var request = jsonRequest(path: "sessions", method: "POST")
-        let body = CreateSessionBody(agent: agentID, environment_id: environmentID)
+        let body = CreateSessionBody(
+            agent: AgentReference(id: agentID, version: agentVersion),
+            environment_id: environmentID,
+            metadata: metadata?.isEmpty == false ? metadata : nil
+        )
         request.httpBody = try JSONEncoder().encode(body)
 
         let data = try await perform(request)
         let sessionInfo = try JSONDecoder().decode(QoderSessionInfo.self, from: data)
         return (sessionInfo, data)
+    }
+
+    public func cancelSession(sessionID: String) async throws -> Data {
+        let request = jsonRequest(path: "sessions/\(sessionID)/cancel", method: "POST")
+        return try await perform(request)
     }
 
     public func sendUserMessage(sessionID: String, prompt: String) async throws -> Data {
@@ -134,8 +155,33 @@ public final class QoderClient {
 }
 
 private struct CreateSessionBody: Encodable {
-    let agent: String
+    let agent: AgentReference
     let environment_id: String
+    let metadata: [String: String]?
+}
+
+private struct AgentReference: Encodable {
+    let id: String
+    let version: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case type
+        case version
+    }
+
+    func encode(to encoder: Encoder) throws {
+        guard let version else {
+            var container = encoder.singleValueContainer()
+            try container.encode(id)
+            return
+        }
+
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode("agent", forKey: .type)
+        try container.encode(version, forKey: .version)
+    }
 }
 
 private struct SendEventsBody: Encodable {

@@ -15,13 +15,26 @@ public struct RunPaths {
 public final class RunRecorder {
     public let paths: RunPaths
 
-    public init(outputRoot: URL, startedAt: Date = Date()) throws {
-        let folderName = Self.timestampFormatter.string(from: startedAt)
-        var runDirectory = outputRoot.appendingPathComponent(folderName, isDirectory: true)
-        var suffix = 2
-        while FileManager.default.fileExists(atPath: runDirectory.path) {
-            runDirectory = outputRoot.appendingPathComponent(String(format: "%@-%02d", folderName, suffix), isDirectory: true)
-            suffix += 1
+    public init(
+        outputRoot: URL,
+        startedAt: Date = Date(),
+        runID: String? = nil,
+        runDirectory explicitRunDirectory: URL? = nil
+    ) throws {
+        let runDirectory: URL
+        if let explicitRunDirectory {
+            runDirectory = explicitRunDirectory
+        } else if let runID, !runID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            runDirectory = outputRoot.appendingPathComponent(Self.safeRunFolderName(runID), isDirectory: true)
+        } else {
+            let folderName = Self.timestampFormatter.string(from: startedAt)
+            var timestampedDirectory = outputRoot.appendingPathComponent(folderName, isDirectory: true)
+            var suffix = 2
+            while FileManager.default.fileExists(atPath: timestampedDirectory.path) {
+                timestampedDirectory = outputRoot.appendingPathComponent(String(format: "%@-%02d", folderName, suffix), isDirectory: true)
+                suffix += 1
+            }
+            runDirectory = timestampedDirectory
         }
         try FileManager.default.createDirectory(at: runDirectory, withIntermediateDirectories: true)
 
@@ -150,6 +163,15 @@ public final class RunRecorder {
             .replacingOccurrences(of: ":", with: "_")
 
         return cleaned.isEmpty ? fallback : cleaned
+    }
+
+    private static func safeRunFolderName(_ runID: String) -> String {
+        let cleaned = runID
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "\\", with: "_")
+            .replacingOccurrences(of: ":", with: "_")
+        return cleaned.isEmpty ? timestampFormatter.string(from: Date()) : cleaned
     }
 
     private static let timestampFormatter: DateFormatter = {

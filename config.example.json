@@ -2,7 +2,9 @@
   "active_profile": "default",
   "profiles": {
     "default": {
+      "base_url": "https://api.qoder.com.cn/api/v1/cloud",
       "agent_id": "replace-with-qoder-agent-id",
+      "agent_version": 1,
       "environment_id": "replace-with-qoder-environment-id",
       "output_root": "~/QoderRuns",
       "token_env": "QODER_PAT"

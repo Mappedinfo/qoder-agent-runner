@@ -43,7 +43,9 @@ struct ContentView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     labeledField("Config", text: $model.configPath)
                     labeledField("Profile", text: $model.profileName)
+                    labeledField("Base URL", text: $model.baseURLPath)
                     labeledField("Agent", text: $model.agentID)
+                    labeledField("Version", text: $model.agentVersion)
                     labeledField("Environment", text: $model.environmentID)
                     labeledField("Output root", text: $model.outputRootPath)
                     labeledField("Token env", text: $model.tokenEnv)
@@ -123,7 +125,9 @@ final class RunnerViewModel: ObservableObject {
     @Published var prompt = ""
     @Published var configPath = QoderConfigResolver.defaultConfigURL().path
     @Published var profileName = "default"
+    @Published var baseURLPath = QoderDefaults.apiBaseURL.absoluteString
     @Published var agentID = ""
+    @Published var agentVersion = ""
     @Published var environmentID = ""
     @Published var outputRootPath = QoderDefaults.defaultOutputRoot.path
     @Published var tokenEnv = QoderDefaults.defaultTokenEnvironmentVariable
@@ -149,6 +153,8 @@ final class RunnerViewModel: ObservableObject {
     var canSend: Bool {
         !isRunning
             && !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && currentBaseURL != nil
+            && currentAgentVersionIsValid
             && !agentID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             && !environmentID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             && hasToken
@@ -210,6 +216,8 @@ final class RunnerViewModel: ObservableObject {
             )
             profileName = resolved.profileName
             agentID = resolved.agentID
+            baseURLPath = resolved.baseURL.absoluteString
+            agentVersion = resolved.agentVersion.map(String.init) ?? ""
             environmentID = resolved.environmentID
             outputRootPath = resolved.outputRoot.path
             tokenEnv = resolved.tokenEnv
@@ -240,7 +248,9 @@ final class RunnerViewModel: ObservableObject {
         let currentProfileName = profileName
         let currentTokenOverride = tokenOverride
         let overrides = QoderConfigOverrides(
+            baseURL: currentBaseURL,
             agentID: agentID,
+            agentVersion: currentAgentVersion,
             environmentID: environmentID,
             outputRoot: URL(fileURLWithPath: outputRootPath, isDirectory: true),
             tokenEnv: tokenEnv,
@@ -345,12 +355,34 @@ final class RunnerViewModel: ObservableObject {
         let selectedProfileName = requested.isEmpty ? (configFile.activeProfile ?? configFile.profiles.keys.sorted().first ?? "default") : requested
         guard let profile = configFile.profiles[selectedProfileName] else { return }
         profileName = selectedProfileName
+        baseURLPath = profile.baseURL ?? QoderDefaults.apiBaseURL.absoluteString
         agentID = profile.agentID ?? ""
+        agentVersion = profile.agentVersion.map(String.init) ?? ""
         environmentID = profile.environmentID ?? ""
         if let outputRoot = profile.outputRoot {
             outputRootPath = QoderConfigResolver.expandPath(outputRoot).path
         }
         tokenEnv = profile.tokenEnv ?? QoderDefaults.defaultTokenEnvironmentVariable
+    }
+
+    private var currentBaseURL: URL? {
+        let trimmed = baseURLPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        guard let url = URL(string: trimmed), url.scheme != nil, url.host != nil else {
+            return nil
+        }
+        return url
+    }
+
+    private var currentAgentVersion: Int? {
+        let trimmed = agentVersion.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        return Int(trimmed)
+    }
+
+    private var currentAgentVersionIsValid: Bool {
+        let trimmed = agentVersion.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty || Int(trimmed).map { $0 > 0 } == true
     }
 
     private static let timeFormatter: DateFormatter = {

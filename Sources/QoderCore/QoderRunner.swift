@@ -1,32 +1,49 @@
 import Foundation
 
 public struct RunConfiguration {
+    public var baseURL: URL
     public var agentID: String
+    public var agentVersion: Int?
     public var environmentID: String
     public var outputRoot: URL
+    public var runID: String?
+    public var runDirectory: URL?
     public var token: String
     public var profileName: String
     public var configPath: URL?
+    public var metadata: [String: String]
 
     public init(
+        baseURL: URL = QoderDefaults.apiBaseURL,
         agentID: String,
+        agentVersion: Int? = nil,
         environmentID: String,
         outputRoot: URL,
+        runID: String? = nil,
+        runDirectory: URL? = nil,
         token: String,
         profileName: String = "default",
-        configPath: URL? = nil
+        configPath: URL? = nil,
+        metadata: [String: String] = [:]
     ) {
+        self.baseURL = baseURL
         self.agentID = agentID
+        self.agentVersion = agentVersion
         self.environmentID = environmentID
         self.outputRoot = outputRoot
+        self.runID = runID
+        self.runDirectory = runDirectory
         self.token = token
         self.profileName = profileName
         self.configPath = configPath
+        self.metadata = metadata
     }
 
     public init(resolvedConfig: ResolvedQoderConfig) {
         self.init(
+            baseURL: resolvedConfig.baseURL,
             agentID: resolvedConfig.agentID,
+            agentVersion: resolvedConfig.agentVersion,
             environmentID: resolvedConfig.environmentID,
             outputRoot: resolvedConfig.outputRoot,
             token: resolvedConfig.token,
@@ -95,7 +112,12 @@ public final class QoderRunner {
         }
 
         let startedAt = Date()
-        let recorder = try RunRecorder(outputRoot: configuration.outputRoot, startedAt: startedAt)
+        let recorder = try RunRecorder(
+            outputRoot: configuration.outputRoot,
+            startedAt: startedAt,
+            runID: configuration.runID,
+            runDirectory: configuration.runDirectory
+        )
         try recorder.writePrompt(prompt)
 
         var sessionID: String?
@@ -110,6 +132,7 @@ public final class QoderRunner {
         func writeMetadata(status: String, error: String? = nil) {
             var object: [String: Any] = [
                 "agent_id": configuration.agentID,
+                "base_url": configuration.baseURL.absoluteString,
                 "environment_id": configuration.environmentID,
                 "output_root": configuration.outputRoot.path,
                 "profile": configuration.profileName,
@@ -118,6 +141,15 @@ public final class QoderRunner {
                 "finished_at": RunRecorder.isoString(Date()),
                 "status": status
             ]
+            if let agentVersion = configuration.agentVersion {
+                object["agent_version"] = agentVersion
+            }
+            if let runID = configuration.runID {
+                object["run_id"] = runID
+            }
+            if !configuration.metadata.isEmpty {
+                object["session_metadata"] = configuration.metadata
+            }
             if let configPath = configuration.configPath {
                 object["config_path"] = configPath.path
             }
@@ -151,10 +183,12 @@ public final class QoderRunner {
 
         do {
             callbacks.onLog("Creating session")
-            let client = QoderClient(token: configuration.token)
+            let client = QoderClient(token: configuration.token, baseURL: configuration.baseURL)
             let (sessionInfo, sessionData) = try await client.createSession(
                 agentID: configuration.agentID,
-                environmentID: configuration.environmentID
+                agentVersion: configuration.agentVersion,
+                environmentID: configuration.environmentID,
+                metadata: configuration.metadata
             )
             sessionID = sessionInfo.id
             try recorder.writeSessionJSON(sessionData)
@@ -232,6 +266,9 @@ public final class QoderRunner {
                 metadataURL: recorder.paths.metadata
             )
         } catch is CancellationError {
+            if let sessionID {
+                await cancelRemoteSession(sessionID: sessionID, callbacks: callbacks)
+            }
             if let primaryReportContent {
                 try? recorder.writeReport(primaryReportContent)
             } else if let lastAgentMessage {
@@ -256,6 +293,21 @@ public final class QoderRunner {
             writeMetadata(status: "failed", error: message)
             callbacks.onLog("Failed: \(message)")
             throw QoderRunnerError.failed(message, recorder.paths.runDirectory)
+        }
+    }
+
+    private func cancelRemoteSession(sessionID: String, callbacks: RunCallbacks) async {
+        let token = configuration.token
+        let baseURL = configuration.baseURL
+        callbacks.onLog("Cancelling remote session")
+        do {
+            try await Task.detached(priority: .utility) {
+                let client = QoderClient(token: token, baseURL: baseURL)
+                _ = try await client.cancelSession(sessionID: sessionID)
+            }.value
+            callbacks.onLog("Remote session cancelled")
+        } catch {
+            callbacks.onLog("Remote cancel failed: \(error.localizedDescription)")
         }
     }
 
