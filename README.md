@@ -38,6 +38,23 @@ The token itself is read from the environment variable named by `token_env`. The
 swift build
 ```
 
+## Install / Register
+
+`qoder-run` is the CLI product built by this repository. Install it into a user-local bin directory and register it for tools such as `academic-harness`:
+
+```bash
+./scripts/install-cli.sh
+```
+
+By default this installs `qoder-run` to `~/.local/bin/qoder-run` and writes a secret-free registry file at `~/.config/mappedinfo/qoder-agent-runner.json`. The registry stores only executable/config paths, repo metadata, and the selected profile. It never stores token values.
+
+Useful options:
+
+```bash
+./scripts/install-cli.sh --prefix ~/.local --config config.local.json --profile default
+./scripts/install-cli.sh --registry ~/.config/mappedinfo/qoder-agent-runner.json
+```
+
 ## CLI
 
 ```bash
