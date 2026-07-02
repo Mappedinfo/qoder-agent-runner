@@ -6,7 +6,9 @@ public struct RunPaths {
     public let session: URL
     public let eventsSSE: URL
     public let eventsJSONL: URL
+    public let artifactsDirectory: URL
     public let report: URL
+    public let summary: URL
     public let metadata: URL
 }
 
@@ -29,7 +31,9 @@ public final class RunRecorder {
             session: runDirectory.appendingPathComponent("session.json"),
             eventsSSE: runDirectory.appendingPathComponent("events.sse"),
             eventsJSONL: runDirectory.appendingPathComponent("events.jsonl"),
+            artifactsDirectory: runDirectory.appendingPathComponent("artifacts", isDirectory: true),
             report: runDirectory.appendingPathComponent("report.md"),
+            summary: runDirectory.appendingPathComponent("summary.md"),
             metadata: runDirectory.appendingPathComponent("metadata.json")
         )
 
@@ -55,6 +59,20 @@ public final class RunRecorder {
 
     public func writeReport(_ report: String) throws {
         try write(report, to: paths.report)
+    }
+
+    public func writeSummary(_ summary: String) throws {
+        try write(summary, to: paths.summary)
+    }
+
+    public func writeArtifact(originalPath: String?, content: String) throws -> URL {
+        try FileManager.default.createDirectory(at: paths.artifactsDirectory, withIntermediateDirectories: true)
+
+        let filename = Self.safeArtifactFilename(from: originalPath)
+        let baseURL = paths.artifactsDirectory.appendingPathComponent(filename)
+        let targetURL = uniqueURL(for: baseURL)
+        try write(content, to: targetURL)
+        return targetURL
     }
 
     public func writeMetadata(_ metadata: [String: Any]) throws {
@@ -90,6 +108,48 @@ public final class RunRecorder {
         } else {
             try data.write(to: url, options: .atomic)
         }
+    }
+
+    private func uniqueURL(for url: URL) -> URL {
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            return url
+        }
+
+        let directory = url.deletingLastPathComponent()
+        let basename = url.deletingPathExtension().lastPathComponent
+        let ext = url.pathExtension
+        var suffix = 2
+
+        while true {
+            let filename = ext.isEmpty
+                ? String(format: "%@-%02d", basename, suffix)
+                : String(format: "%@-%02d.%@", basename, suffix, ext)
+            let candidate = directory.appendingPathComponent(filename)
+            if !FileManager.default.fileExists(atPath: candidate.path) {
+                return candidate
+            }
+            suffix += 1
+        }
+    }
+
+    private static func safeArtifactFilename(from originalPath: String?) -> String {
+        let fallback = "artifact.md"
+        guard let originalPath, !originalPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return fallback
+        }
+
+        let filename = URL(fileURLWithPath: originalPath).lastPathComponent
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !filename.isEmpty, filename != ".", filename != "/" else {
+            return fallback
+        }
+
+        let cleaned = filename
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "\\", with: "_")
+            .replacingOccurrences(of: ":", with: "_")
+
+        return cleaned.isEmpty ? fallback : cleaned
     }
 
     private static let timestampFormatter: DateFormatter = {

@@ -46,6 +46,13 @@ swift run qoder-run --config config.local.json --profile default --prompt-file /
 
 Each run writes a timestamped folder under the configured `output_root`.
 
+Run outputs include:
+
+- `report.md`: primary generated document. When the agent writes an artifact, this is copied from the `Write` tool content.
+- `summary.md`: final assistant summary message.
+- `artifacts/`: every file emitted through the `Write` tool.
+- `events.sse`, `events.jsonl`, `session.json`, `prompt.txt`, and `metadata.json`.
+
 ## macOS App
 
 ```bash
@@ -58,5 +65,7 @@ For a double-clickable app bundle:
 ./scripts/build-app.sh
 open dist/QoderRunner.app
 ```
+
+Packaging is intentionally local-only; this repository does not require GitHub Actions.
 
 The app clears common proxy environment variables and uses a `URLSession` configuration with no proxy dictionary. This disables app-level proxy use, but it cannot bypass OS-level TUN/VPN routing.

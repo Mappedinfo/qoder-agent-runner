@@ -54,6 +54,7 @@ public struct RunResult {
     public let sessionID: String?
     public let status: String
     public let reportURL: URL
+    public let summaryURL: URL
     public let metadataURL: URL
 }
 
@@ -101,6 +102,10 @@ public final class QoderRunner {
         var finalStatus = "started"
         var stopReason: Any?
         var lastAgentMessage: String?
+        var primaryReportContent: String?
+        var artifactRecords: [[String: Any]] = []
+        var pendingDeliveries: [[String: Any]] = []
+        var deliveredArtifacts: [[String: Any]] = []
 
         func writeMetadata(status: String, error: String? = nil) {
             var object: [String: Any] = [
@@ -128,6 +133,18 @@ public final class QoderRunner {
             }
             if FileManager.default.fileExists(atPath: recorder.paths.report.path) {
                 object["report_path"] = recorder.paths.report.path
+            }
+            if FileManager.default.fileExists(atPath: recorder.paths.summary.path) {
+                object["summary_path"] = recorder.paths.summary.path
+            }
+            if !artifactRecords.isEmpty {
+                object["artifacts"] = artifactRecords
+            }
+            if !pendingDeliveries.isEmpty {
+                object["deliver_artifacts_requests"] = pendingDeliveries
+            }
+            if !deliveredArtifacts.isEmpty {
+                object["delivered_artifacts"] = deliveredArtifacts
             }
             try? recorder.writeMetadata(object)
         }
@@ -160,6 +177,29 @@ public final class QoderRunner {
                         if let message = Self.agentMessageText(from: data) {
                             lastAgentMessage = message
                         }
+                        if let writeArtifact = Self.writeArtifact(from: data) {
+                            let localURL = try recorder.writeArtifact(
+                                originalPath: writeArtifact.filePath,
+                                content: writeArtifact.content
+                            )
+                            if primaryReportContent == nil {
+                                primaryReportContent = writeArtifact.content
+                            }
+                            var record: [String: Any] = [
+                                "tool": "Write",
+                                "local_path": localURL.path,
+                                "bytes": Data(writeArtifact.content.utf8).count
+                            ]
+                            record["event_id"] = writeArtifact.eventID
+                            record["source_path"] = writeArtifact.filePath
+                            artifactRecords.append(record)
+                        }
+                        if let delivery = Self.deliverArtifactsRequest(from: data) {
+                            pendingDeliveries.append(delivery)
+                        }
+                        if let delivered = Self.deliveredArtifact(from: data) {
+                            deliveredArtifacts.append(delivered)
+                        }
                         if let parsedStopReason = Self.stopReason(from: data) {
                             stopReason = parsedStopReason
                         }
@@ -176,7 +216,10 @@ public final class QoderRunner {
             if finalStatus != "idle" {
                 finalStatus = "stream_ended"
             }
-            try recorder.writeReport(lastAgentMessage ?? "")
+            try recorder.writeReport(primaryReportContent ?? lastAgentMessage ?? "")
+            if let lastAgentMessage {
+                try recorder.writeSummary(lastAgentMessage)
+            }
             writeMetadata(status: finalStatus)
             callbacks.onLog("Finished: \(finalStatus)")
 
@@ -185,18 +228,29 @@ public final class QoderRunner {
                 sessionID: sessionID,
                 status: finalStatus,
                 reportURL: recorder.paths.report,
+                summaryURL: recorder.paths.summary,
                 metadataURL: recorder.paths.metadata
             )
         } catch is CancellationError {
-            if let lastAgentMessage {
+            if let primaryReportContent {
+                try? recorder.writeReport(primaryReportContent)
+            } else if let lastAgentMessage {
                 try? recorder.writeReport(lastAgentMessage)
+            }
+            if let lastAgentMessage {
+                try? recorder.writeSummary(lastAgentMessage)
             }
             writeMetadata(status: "cancelled")
             callbacks.onLog("Cancelled")
             throw QoderRunnerError.failed("Run cancelled", recorder.paths.runDirectory)
         } catch {
-            if let lastAgentMessage {
+            if let primaryReportContent {
+                try? recorder.writeReport(primaryReportContent)
+            } else if let lastAgentMessage {
                 try? recorder.writeReport(lastAgentMessage)
+            }
+            if let lastAgentMessage {
+                try? recorder.writeSummary(lastAgentMessage)
             }
             let message = Self.diagnosticMessage(for: error)
             writeMetadata(status: "failed", error: message)
@@ -221,6 +275,74 @@ public final class QoderRunner {
         }.joined()
 
         return text.isEmpty ? nil : text
+    }
+
+    private struct WriteArtifact {
+        let eventID: String?
+        let filePath: String?
+        let content: String
+    }
+
+    private static func writeArtifact(from json: String) -> WriteArtifact? {
+        guard
+            let data = json.data(using: .utf8),
+            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            (object["type"] as? String) == "agent.tool_use",
+            (object["name"] as? String) == "Write",
+            let input = object["input"] as? [String: Any],
+            let content = input["content"] as? String,
+            !content.isEmpty
+        else {
+            return nil
+        }
+
+        return WriteArtifact(
+            eventID: object["id"] as? String,
+            filePath: input["file_path"] as? String,
+            content: content
+        )
+    }
+
+    private static func deliverArtifactsRequest(from json: String) -> [String: Any]? {
+        guard
+            let data = json.data(using: .utf8),
+            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            (object["type"] as? String) == "agent.tool_use",
+            (object["name"] as? String) == "DeliverArtifacts",
+            let input = object["input"] as? [String: Any]
+        else {
+            return nil
+        }
+
+        var request: [String: Any] = [
+            "tool": "DeliverArtifacts"
+        ]
+        request["event_id"] = object["id"] as? String
+        if let files = input["files"] {
+            request["files"] = files
+        }
+        return request
+    }
+
+    private static func deliveredArtifact(from json: String) -> [String: Any]? {
+        guard
+            let data = json.data(using: .utf8),
+            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            (object["type"] as? String) == "agent.artifact_delivered"
+        else {
+            return nil
+        }
+
+        var delivered: [String: Any] = [:]
+        delivered["event_id"] = object["id"] as? String
+        delivered["file_id"] = object["file_id"] as? String
+        delivered["original_filename"] = object["original_filename"] as? String
+        delivered["content_type"] = object["content_type"] as? String
+        delivered["size"] = object["size"]
+        if let processedAt = object["processed_at"] {
+            delivered["processed_at"] = processedAt
+        }
+        return delivered
     }
 
     private static func stopReason(from json: String) -> Any? {
