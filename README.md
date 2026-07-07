@@ -25,13 +25,20 @@ Example local config shape:
       "environment_id": "your-environment-id",
       "output_root": "~/QoderRuns",
       "token_env": "QODER_PAT",
-      "env_file": ".env"
+      "env_file": ".env",
+      "network_mode": "auto"
     }
   }
 }
 ```
 
 The token itself is read from the environment variable named by `token_env`, or from `env_file` when the process environment does not contain that variable. If `env_file` is omitted, the runner automatically checks for `.env` next to `config.local.json`. The UI also provides a temporary token field for one run; it is not written to config. The default API base URL remains `https://api.qoder.com.cn/api/v1/cloud`; override `base_url` per profile when needed.
+
+`network_mode` controls app-level proxy behavior:
+
+- `auto` first tries direct mode, then falls back to system networking only when direct DNS/connectivity fails.
+- `direct` clears common proxy environment variables and disables URLSession proxy settings.
+- `system` uses the system URLSession behavior and may use macOS proxy/VPN/TUN routing.
 
 ## Build
 
@@ -63,6 +70,7 @@ swift run qoder-run --prompt "调研推理时扩展与更大预训练模型在�
 swift run qoder-run --prompt-file /path/to/prompt.md
 swift run qoder-run --config config.local.json --profile default --prompt-file /path/to/prompt.md
 swift run qoder-run --prompt-file /path/to/prompt.md --run-id run_001 --metadata project_id=demo --metadata task_id=task_001
+swift run qoder-run --config config.local.json --network-mode auto --prompt-file /path/to/prompt.md
 swift run qoder-run --config config.local.json --profile default --check-config
 ```
 
@@ -90,4 +98,4 @@ open dist/QoderRunner.app
 
 Packaging is intentionally local-only; this repository does not require GitHub Actions.
 
-The app clears common proxy environment variables and uses a `URLSession` configuration with no proxy dictionary. This disables app-level proxy use, but it cannot bypass OS-level TUN/VPN routing.
+By default the app uses `network_mode=auto`: it tries no-proxy direct networking first, then falls back to system networking if direct hostname resolution/connectivity fails. Strict no-proxy behavior is still available with `network_mode=direct`, but it cannot bypass OS-level TUN/VPN routing when macOS itself captures traffic.

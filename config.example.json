@@ -8,7 +8,8 @@
       "environment_id": "replace-with-qoder-environment-id",
       "output_root": "~/QoderRuns",
       "token_env": "QODER_PAT",
-      "env_file": ".env"
+      "env_file": ".env",
+      "network_mode": "auto"
     }
   }
 }

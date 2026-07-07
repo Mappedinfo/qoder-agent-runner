@@ -17,6 +17,7 @@ final class QoderConfigTests: XCTestCase {
 
         XCTAssertEqual(resolved.token, "from-env-file")
         XCTAssertEqual(resolved.envFile?.standardizedFileURL, envURL.standardizedFileURL)
+        XCTAssertEqual(resolved.networkMode, .auto)
     }
 
     func testResolverReadsRelativeEnvFileFromConfig() throws {
@@ -38,6 +39,22 @@ final class QoderConfigTests: XCTestCase {
         XCTAssertEqual(resolved.envFile?.standardizedFileURL, envURL.standardizedFileURL)
     }
 
+    func testResolverReadsNetworkModeFromConfig() throws {
+        let tempDir = try makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+        unsetenv("QODER_TEST_PAT_NETWORK")
+
+        let configURL = tempDir.appendingPathComponent("config.local.json")
+        let envURL = tempDir.appendingPathComponent(".env")
+        try configJSON(tokenEnv: "QODER_TEST_PAT_NETWORK", networkMode: "system")
+            .write(to: configURL, atomically: true, encoding: .utf8)
+        try "QODER_TEST_PAT_NETWORK=from-env-file\n".write(to: envURL, atomically: true, encoding: .utf8)
+
+        let resolved = try QoderConfigResolver.resolve(configPath: configURL)
+
+        XCTAssertEqual(resolved.networkMode, .system)
+    }
+
     private func makeTempDirectory() throws -> URL {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("qoder-config-tests-\(UUID().uuidString)", isDirectory: true)
@@ -45,7 +62,7 @@ final class QoderConfigTests: XCTestCase {
         return url
     }
 
-    private func configJSON(tokenEnv: String, envFile: String? = nil) -> String {
+    private func configJSON(tokenEnv: String, envFile: String? = nil, networkMode: String? = nil) -> String {
         var fields = [
             #""base_url": "https://api.qoder.com.cn/api/v1/cloud""#,
             #""agent_id": "agent_test""#,
@@ -55,6 +72,9 @@ final class QoderConfigTests: XCTestCase {
         ]
         if let envFile {
             fields.append(#""env_file": "\#(envFile)""#)
+        }
+        if let networkMode {
+            fields.append(#""network_mode": "\#(networkMode)""#)
         }
         return """
         {

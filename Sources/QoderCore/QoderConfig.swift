@@ -18,6 +18,7 @@ public struct QoderProfileConfig: Codable {
     public var outputRoot: String?
     public var tokenEnv: String?
     public var envFile: String?
+    public var networkMode: String?
 
     public init(
         baseURL: String? = nil,
@@ -26,7 +27,8 @@ public struct QoderProfileConfig: Codable {
         environmentID: String? = nil,
         outputRoot: String? = nil,
         tokenEnv: String? = nil,
-        envFile: String? = nil
+        envFile: String? = nil,
+        networkMode: String? = nil
     ) {
         self.baseURL = baseURL
         self.agentID = agentID
@@ -35,6 +37,7 @@ public struct QoderProfileConfig: Codable {
         self.outputRoot = outputRoot
         self.tokenEnv = tokenEnv
         self.envFile = envFile
+        self.networkMode = networkMode
     }
 
     enum CodingKeys: String, CodingKey {
@@ -45,6 +48,7 @@ public struct QoderProfileConfig: Codable {
         case outputRoot = "output_root"
         case tokenEnv = "token_env"
         case envFile = "env_file"
+        case networkMode = "network_mode"
     }
 }
 
@@ -57,6 +61,7 @@ public struct QoderConfigOverrides {
     public var tokenEnv: String?
     public var envFile: URL?
     public var tokenOverride: String?
+    public var networkMode: QoderNetworkMode?
 
     public init(
         baseURL: URL? = nil,
@@ -66,7 +71,8 @@ public struct QoderConfigOverrides {
         outputRoot: URL? = nil,
         tokenEnv: String? = nil,
         envFile: URL? = nil,
-        tokenOverride: String? = nil
+        tokenOverride: String? = nil,
+        networkMode: QoderNetworkMode? = nil
     ) {
         self.baseURL = baseURL
         self.agentID = agentID
@@ -76,6 +82,7 @@ public struct QoderConfigOverrides {
         self.tokenEnv = tokenEnv
         self.envFile = envFile
         self.tokenOverride = tokenOverride
+        self.networkMode = networkMode
     }
 }
 
@@ -90,6 +97,7 @@ public struct ResolvedQoderConfig {
     public let tokenEnv: String
     public let envFile: URL?
     public let token: String
+    public let networkMode: QoderNetworkMode
 }
 
 public enum QoderConfigError: LocalizedError {
@@ -100,6 +108,7 @@ public enum QoderConfigError: LocalizedError {
     case missingAgentID
     case missingEnvironmentID
     case missingToken(String)
+    case invalidNetworkMode(String)
 
     public var errorDescription: String? {
         switch self {
@@ -117,6 +126,8 @@ public enum QoderConfigError: LocalizedError {
             return "Missing environment_id. Set it in config.local.json or pass --environment-id."
         case .missingToken(let tokenEnv):
             return "Missing token. Set \(tokenEnv) in the process environment, configure env_file, or provide a temporary token in the UI."
+        case .invalidNetworkMode(let value):
+            return "Invalid network_mode: \(value). Use auto, direct, or system."
         }
     }
 }
@@ -201,6 +212,9 @@ public enum QoderConfigResolver {
         let baseURL = try overrides.baseURL
             ?? profile.baseURL.flatMap { clean($0) }.map(resolveBaseURL(_:))
             ?? QoderDefaults.apiBaseURL
+        let networkMode = try overrides.networkMode
+            ?? profile.networkMode.flatMap { clean($0) }.map(resolveNetworkMode(_:))
+            ?? QoderNetworkMode.defaultMode
 
         guard let agentID else {
             throw QoderConfigError.missingAgentID
@@ -226,7 +240,8 @@ public enum QoderConfigResolver {
             outputRoot: outputRoot,
             tokenEnv: tokenEnv,
             envFile: envFile,
-            token: token
+            token: token,
+            networkMode: networkMode
         )
     }
 
@@ -262,6 +277,14 @@ public enum QoderConfigResolver {
             throw QoderConfigError.invalidBaseURL(value)
         }
         return url
+    }
+
+    private static func resolveNetworkMode(_ value: String) throws -> QoderNetworkMode {
+        let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard let mode = QoderNetworkMode(rawValue: normalized) else {
+            throw QoderConfigError.invalidNetworkMode(value)
+        }
+        return mode
     }
 
     private static func clean(_ value: String?) -> String? {

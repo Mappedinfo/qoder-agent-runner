@@ -10,3 +10,4 @@ qoder_runs/
 runs/
 *.xcuserdata/
 *.xcodeproj/project.xcworkspace/xcuserdata/
+design-local/

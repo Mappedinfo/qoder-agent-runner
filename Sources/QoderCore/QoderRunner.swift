@@ -12,6 +12,7 @@ public struct RunConfiguration {
     public var profileName: String
     public var configPath: URL?
     public var metadata: [String: String]
+    public var networkMode: QoderNetworkMode
 
     public init(
         baseURL: URL = QoderDefaults.apiBaseURL,
@@ -24,7 +25,8 @@ public struct RunConfiguration {
         token: String,
         profileName: String = "default",
         configPath: URL? = nil,
-        metadata: [String: String] = [:]
+        metadata: [String: String] = [:],
+        networkMode: QoderNetworkMode = QoderNetworkMode.defaultMode
     ) {
         self.baseURL = baseURL
         self.agentID = agentID
@@ -37,6 +39,7 @@ public struct RunConfiguration {
         self.profileName = profileName
         self.configPath = configPath
         self.metadata = metadata
+        self.networkMode = networkMode
     }
 
     public init(resolvedConfig: ResolvedQoderConfig) {
@@ -48,7 +51,8 @@ public struct RunConfiguration {
             outputRoot: resolvedConfig.outputRoot,
             token: resolvedConfig.token,
             profileName: resolvedConfig.profileName,
-            configPath: resolvedConfig.configPath
+            configPath: resolvedConfig.configPath,
+            networkMode: resolvedConfig.networkMode
         )
     }
 }
@@ -128,6 +132,7 @@ public final class QoderRunner {
         var artifactRecords: [[String: Any]] = []
         var pendingDeliveries: [[String: Any]] = []
         var deliveredArtifacts: [[String: Any]] = []
+        var effectiveNetworkMode: QoderNetworkMode = configuration.networkMode == .auto ? .direct : configuration.networkMode
 
         func writeMetadata(status: String, error: String? = nil) {
             var object: [String: Any] = [
@@ -139,6 +144,8 @@ public final class QoderRunner {
                 "run_dir": recorder.paths.runDirectory.path,
                 "started_at": RunRecorder.isoString(startedAt),
                 "finished_at": RunRecorder.isoString(Date()),
+                "network_mode": configuration.networkMode.rawValue,
+                "network_mode_effective": effectiveNetworkMode.rawValue,
                 "status": status
             ]
             if let agentVersion = configuration.agentVersion {
@@ -161,7 +168,7 @@ public final class QoderRunner {
             }
             if let error {
                 object["error"] = error
-                object["network_note"] = "The runner clears HTTP_PROXY, HTTPS_PROXY, ALL_PROXY, and URLSession proxy settings. OS-level TUN/VPN routing can still intercept traffic."
+                object["network_note"] = configuration.networkMode.diagnosticNote
             }
             if FileManager.default.fileExists(atPath: recorder.paths.report.path) {
                 object["report_path"] = recorder.paths.report.path
@@ -183,69 +190,87 @@ public final class QoderRunner {
 
         do {
             callbacks.onLog("Creating session")
-            let client = QoderClient(token: configuration.token, baseURL: configuration.baseURL)
-            let (sessionInfo, sessionData) = try await client.createSession(
-                agentID: configuration.agentID,
-                agentVersion: configuration.agentVersion,
-                environmentID: configuration.environmentID,
-                metadata: configuration.metadata
-            )
+            var client = makeClient(mode: effectiveNetworkMode)
+            let (sessionInfo, sessionData) = try await withAutoNetworkFallback(
+                client: &client,
+                effectiveNetworkMode: &effectiveNetworkMode,
+                callbacks: callbacks
+            ) { activeClient in
+                try await activeClient.createSession(
+                    agentID: configuration.agentID,
+                    agentVersion: configuration.agentVersion,
+                    environmentID: configuration.environmentID,
+                    metadata: configuration.metadata
+                )
+            }
             sessionID = sessionInfo.id
             try recorder.writeSessionJSON(sessionData)
             finalStatus = "session_created"
             writeMetadata(status: finalStatus)
 
             callbacks.onLog("Sending prompt")
-            _ = try await client.sendUserMessage(sessionID: sessionInfo.id, prompt: prompt)
+            _ = try await withAutoNetworkFallback(
+                client: &client,
+                effectiveNetworkMode: &effectiveNetworkMode,
+                callbacks: callbacks
+            ) { activeClient in
+                try await activeClient.sendUserMessage(sessionID: sessionInfo.id, prompt: prompt)
+            }
 
             callbacks.onLog("Streaming events")
-            try await client.streamEvents(
-                sessionID: sessionInfo.id,
-                onRawLine: { line in
-                    try recorder.appendSSELine(line)
-                },
-                onEvent: { event in
-                    callbacks.onEvent(event)
-                    if let data = event.data {
-                        try recorder.appendEventJSONLine(data)
-                        if let message = Self.agentMessageText(from: data) {
-                            lastAgentMessage = message
-                        }
-                        if let writeArtifact = Self.writeArtifact(from: data) {
-                            let localURL = try recorder.writeArtifact(
-                                originalPath: writeArtifact.filePath,
-                                content: writeArtifact.content
-                            )
-                            if primaryReportContent == nil {
-                                primaryReportContent = writeArtifact.content
+            try await withAutoNetworkFallback(
+                client: &client,
+                effectiveNetworkMode: &effectiveNetworkMode,
+                callbacks: callbacks
+            ) { activeClient in
+                try await activeClient.streamEvents(
+                    sessionID: sessionInfo.id,
+                    onRawLine: { line in
+                        try recorder.appendSSELine(line)
+                    },
+                    onEvent: { event in
+                        callbacks.onEvent(event)
+                        if let data = event.data {
+                            try recorder.appendEventJSONLine(data)
+                            if let message = Self.agentMessageText(from: data) {
+                                lastAgentMessage = message
                             }
-                            var record: [String: Any] = [
-                                "tool": "Write",
-                                "local_path": localURL.path,
-                                "bytes": Data(writeArtifact.content.utf8).count
-                            ]
-                            record["event_id"] = writeArtifact.eventID
-                            record["source_path"] = writeArtifact.filePath
-                            artifactRecords.append(record)
+                            if let writeArtifact = Self.writeArtifact(from: data) {
+                                let localURL = try recorder.writeArtifact(
+                                    originalPath: writeArtifact.filePath,
+                                    content: writeArtifact.content
+                                )
+                                if primaryReportContent == nil {
+                                    primaryReportContent = writeArtifact.content
+                                }
+                                var record: [String: Any] = [
+                                    "tool": "Write",
+                                    "local_path": localURL.path,
+                                    "bytes": Data(writeArtifact.content.utf8).count
+                                ]
+                                record["event_id"] = writeArtifact.eventID
+                                record["source_path"] = writeArtifact.filePath
+                                artifactRecords.append(record)
+                            }
+                            if let delivery = Self.deliverArtifactsRequest(from: data) {
+                                pendingDeliveries.append(delivery)
+                            }
+                            if let delivered = Self.deliveredArtifact(from: data) {
+                                deliveredArtifacts.append(delivered)
+                            }
+                            if let parsedStopReason = Self.stopReason(from: data) {
+                                stopReason = parsedStopReason
+                            }
                         }
-                        if let delivery = Self.deliverArtifactsRequest(from: data) {
-                            pendingDeliveries.append(delivery)
-                        }
-                        if let delivered = Self.deliveredArtifact(from: data) {
-                            deliveredArtifacts.append(delivered)
-                        }
-                        if let parsedStopReason = Self.stopReason(from: data) {
-                            stopReason = parsedStopReason
-                        }
-                    }
 
-                    if event.name == "session.status_idle" {
-                        finalStatus = "idle"
-                        return false
+                        if event.name == "session.status_idle" {
+                            finalStatus = "idle"
+                            return false
+                        }
+                        return true
                     }
-                    return true
-                }
-            )
+                )
+            }
 
             if finalStatus != "idle" {
                 finalStatus = "stream_ended"
@@ -302,12 +327,35 @@ public final class QoderRunner {
         callbacks.onLog("Cancelling remote session")
         do {
             try await Task.detached(priority: .utility) {
-                let client = QoderClient(token: token, baseURL: baseURL)
+                let client = QoderClient(token: token, baseURL: baseURL, networkMode: .system)
                 _ = try await client.cancelSession(sessionID: sessionID)
             }.value
             callbacks.onLog("Remote session cancelled")
         } catch {
             callbacks.onLog("Remote cancel failed: \(error.localizedDescription)")
+        }
+    }
+
+    private func makeClient(mode: QoderNetworkMode) -> QoderClient {
+        QoderClient(token: configuration.token, baseURL: configuration.baseURL, networkMode: mode)
+    }
+
+    private func withAutoNetworkFallback<T>(
+        client: inout QoderClient,
+        effectiveNetworkMode: inout QoderNetworkMode,
+        callbacks: RunCallbacks,
+        operation: (QoderClient) async throws -> T
+    ) async throws -> T {
+        do {
+            return try await operation(client)
+        } catch {
+            guard configuration.networkMode == .auto, effectiveNetworkMode == .direct, Self.canFallbackToSystemNetwork(error) else {
+                throw error
+            }
+            callbacks.onLog("Direct network failed before request completion; retrying with system networking")
+            effectiveNetworkMode = .system
+            client = makeClient(mode: .system)
+            return try await operation(client)
         }
     }
 
@@ -410,8 +458,20 @@ public final class QoderRunner {
 
     private static func diagnosticMessage(for error: Error) -> String {
         if let urlError = error as? URLError {
-            return "\(urlError.localizedDescription). Direct mode is enabled: env proxies and URLSession proxy settings are disabled; if traffic is still captured, check OS-level TUN/VPN routing."
+            return "\(urlError.localizedDescription). Network mode failed before Qoder completed the request."
         }
         return error.localizedDescription
+    }
+
+    private static func canFallbackToSystemNetwork(_ error: Error) -> Bool {
+        guard let urlError = error as? URLError else {
+            return false
+        }
+        switch urlError.code {
+        case .cannotFindHost, .cannotConnectToHost, .dnsLookupFailed, .notConnectedToInternet:
+            return true
+        default:
+            return false
+        }
     }
 }

@@ -19,26 +19,66 @@ public enum QoderClientError: LocalizedError {
     }
 }
 
+public enum QoderNetworkMode: String, Codable, CaseIterable {
+    case auto
+    case direct
+    case system
+
+    public static let defaultMode: QoderNetworkMode = .auto
+
+    public var usesAppProxyByDefault: Bool {
+        self == .system
+    }
+
+    public var description: String {
+        switch self {
+        case .auto:
+            return "auto"
+        case .direct:
+            return "direct"
+        case .system:
+            return "system"
+        }
+    }
+
+    public var diagnosticNote: String {
+        switch self {
+        case .auto:
+            return "Network mode auto first disables env proxies and URLSession proxy settings, then falls back to system networking only when direct hostname resolution/connectivity fails. OS-level TUN/VPN routing can still intercept traffic."
+        case .direct:
+            return "Network mode direct clears HTTP_PROXY, HTTPS_PROXY, ALL_PROXY, and URLSession proxy settings. OS-level TUN/VPN routing can still intercept traffic."
+        case .system:
+            return "Network mode system uses the system URLSession networking behavior. This may use macOS proxy/VPN/TUN routing."
+        }
+    }
+}
+
 public final class QoderClient {
     private let token: String
     private let baseURL: URL
     private let session: URLSession
+    public let networkMode: QoderNetworkMode
 
     public init(
         token: String,
         baseURL: URL = QoderDefaults.apiBaseURL,
+        networkMode: QoderNetworkMode = .direct,
         protocolClasses: [AnyClass]? = nil
     ) {
-        Self.clearProxyEnvironmentForCurrentProcess()
-
         self.token = token
         self.baseURL = baseURL
+        self.networkMode = networkMode
+        if networkMode != .system {
+            Self.clearProxyEnvironmentForCurrentProcess()
+        }
 
         let configuration = URLSessionConfiguration.ephemeral
         if let protocolClasses {
             configuration.protocolClasses = protocolClasses
         }
-        configuration.connectionProxyDictionary = [:]
+        if networkMode != .system {
+            configuration.connectionProxyDictionary = [:]
+        }
         configuration.requestCachePolicy = .reloadIgnoringLocalAndRemoteCacheData
         configuration.urlCache = nil
         configuration.httpCookieStorage = nil

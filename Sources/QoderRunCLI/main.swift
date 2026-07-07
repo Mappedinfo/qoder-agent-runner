@@ -20,6 +20,7 @@ struct QoderRunCLI {
                 print("environment_id=set")
                 print("token_env=\(resolvedConfig.tokenEnv)")
                 print("env_file=\(resolvedConfig.envFile?.path ?? "")")
+                print("network_mode=\(resolvedConfig.networkMode.rawValue)")
                 return
             }
 
@@ -72,6 +73,7 @@ struct QoderRunCLI {
           --metadata K=V         session metadata; can be repeated
           --token-env NAME       token environment variable; defaults to QODER_PAT
           --env-file PATH        optional .env file containing the token variable
+          --network-mode MODE    auto, direct, or system; default: auto
           --check-config         validate config and token resolution without a network call
           --help                 show this help
         """)
@@ -88,7 +90,8 @@ struct QoderRunCLI {
                 environmentID: options.environmentID,
                 outputRoot: options.outputRoot,
                 tokenEnv: options.tokenEnv,
-                envFile: options.envFile
+                envFile: options.envFile,
+                networkMode: options.networkMode
             )
         )
     }
@@ -109,6 +112,7 @@ private struct CLIOptions {
     var metadata: [String: String] = [:]
     var tokenEnv: String?
     var envFile: URL?
+    var networkMode: QoderNetworkMode?
     var showHelp = false
     var checkConfig = false
 
@@ -164,6 +168,12 @@ private struct CLIOptions {
                 options.tokenEnv = try value(after: argument, in: arguments, index: &index)
             case "--env-file":
                 options.envFile = URL(fileURLWithPath: try value(after: argument, in: arguments, index: &index))
+            case "--network-mode":
+                let rawValue = try value(after: argument, in: arguments, index: &index).lowercased()
+                guard let mode = QoderNetworkMode(rawValue: rawValue) else {
+                    throw CLIError.invalidValue(argument, rawValue)
+                }
+                options.networkMode = mode
             default:
                 throw CLIError.unknownArgument(argument)
             }
